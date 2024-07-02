@@ -98,7 +98,10 @@ export function Article(props: ArticleProps): JSX.Element {
   // Post message to webkit so apple app embeds get progress updates
   // TODO: verify if ios still needs this code...seeems to be duplicated
   useEffect(() => {
-    if (typeof window?.webkit != 'undefined') {
+    if (
+      typeof window?.webkit != 'undefined' &&
+      'messageHandlers' in window.webkit
+    ) {
       window.webkit.messageHandlers.readingProgressUpdate?.postMessage({
         progress: readingProgress,
       })
@@ -241,6 +244,35 @@ export function Article(props: ArticleProps): JSX.Element {
             theme: isDarkTheme() ? 'dark' : 'light',
             align: 'center',
             dnt: 'true',
+          })
+        })
+      })()
+    }
+  }, [])
+
+  useEffect(() => {
+    const tikTokPlaceholders = Array.from(
+      document.getElementsByClassName('tiktok-embed')
+    )
+
+    if (tikTokPlaceholders.length > 0) {
+      ;(async () => {
+        const tkScriptUrl = 'https://www.tiktok.com/embed.js'
+        const tkScriptWindowFieldName = 'tiktok'
+        const tkScriptName = tkScriptWindowFieldName
+
+        await new Promise((resolve, reject) => {
+          if (!loadjs.isDefined(tkScriptName)) {
+            loadjs(tkScriptUrl, tkScriptName)
+          }
+          loadjs.ready(tkScriptName, {
+            success: () => {
+              if (window.tiktokEmbed) {
+                window.tiktokEmbed.lib.render(tikTokPlaceholders)
+              }
+              resolve(true)
+            },
+            error: () => reject(new Error('Could not load TikTok handler')),
           })
         })
       })()

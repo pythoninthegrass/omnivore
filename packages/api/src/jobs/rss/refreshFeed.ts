@@ -2,6 +2,7 @@ import axios from 'axios'
 import crypto from 'crypto'
 import { parseHTML } from 'linkedom'
 import Parser, { Item } from 'rss-parser'
+import { v4 as uuid } from 'uuid'
 import { FetchContentType } from '../../entity/subscription'
 import { env } from '../../env'
 import { ArticleSavingRequestStatus } from '../../generated/graphql'
@@ -15,7 +16,7 @@ import {
 import { findActiveUser } from '../../services/user'
 import createHttpTaskWithToken from '../../utils/createTask'
 import { cleanUrl } from '../../utils/helpers'
-import { createThumbnailUrl } from '../../utils/imageproxy'
+import { createThumbnailProxyUrl } from '../../utils/imageproxy'
 import { logger } from '../../utils/logger'
 import { RSSRefreshContext } from './refreshAllFeeds'
 
@@ -72,13 +73,14 @@ export type RssFeedItem = Item & {
   link: string
 }
 
-interface User {
+interface UserConfig {
   id: string
   folder: FolderType
+  libraryItemId: string
 }
 
 interface FetchContentTask {
-  users: Map<string, User> // userId -> User
+  users: Map<string, UserConfig> // userId -> User
   item: RssFeedItem
 }
 
@@ -86,12 +88,20 @@ export const isOldItem = (
   item: RssFeedItem,
   mostRecentItemTimestamp: number
 ) => {
-  // existing items and items that were published before 24h
-  const publishedAt = item.isoDate ? new Date(item.isoDate) : new Date()
-  return (
-    publishedAt <= new Date(mostRecentItemTimestamp) ||
-    publishedAt < new Date(Date.now() - 24 * 60 * 60 * 1000)
-  )
+  // always fetch items without isoDate
+  if (!item.isoDate) {
+    return false
+  }
+
+  const publishedAt = new Date(item.isoDate)
+
+  // don't fetch older than 24 hrs items for new feeds
+  if (!mostRecentItemTimestamp) {
+    return publishedAt < new Date(Date.now() - 24 * 60 * 60 * 1000)
+  }
+
+  // don't fetch existing items for old feeds
+  return publishedAt <= new Date(mostRecentItemTimestamp)
 }
 
 const feedFetchFailedRedisKey = (feedUrl: string) =>
@@ -160,8 +170,12 @@ const getThumbnail = (item: RssFeedItem) => {
     return item['media:thumbnail'].$.url
   }
 
-  return item['media:content']?.find((media) => media.$.medium === 'image')?.$
-    .url
+  if (item['media:content']) {
+    return item['media:content'].find((media) => media.$?.medium === 'image')?.$
+      .url
+  }
+
+  return undefined
 }
 
 export const fetchAndChecksum = async (url: string) => {
@@ -192,22 +206,40 @@ export const fetchAndChecksum = async (url: string) => {
 
 const parseFeed = async (url: string, content: string) => {
   try {
-    // check if url is a telegram channel
-    const telegramRegex = /https:\/\/t\.me\/([a-zA-Z0-9_]+)/
+    // check if url is a telegram channel or preview
+    const telegramRegex = /t\.me\/([^/]+)/
     const telegramMatch = url.match(telegramRegex)
     if (telegramMatch) {
+      let channel = telegramMatch[1]
+      if (channel.startsWith('s/')) {
+        channel = channel.slice(2)
+      } else {
+        // open the preview page to get the data
+        const fetchResult = await fetchAndChecksum(`https://t.me/s/${channel}`)
+        if (!fetchResult) {
+          return null
+        }
+
+        content = fetchResult.content
+      }
+
       const dom = parseHTML(content).document
-      const title = dom.querySelector('meta[property="og:title"]')
+      const title =
+        dom
+          .querySelector('meta[property="og:title"]')
+          ?.getAttribute('content') || dom.title
       // post has attribute data-post
       const posts = dom.querySelectorAll('[data-post]')
       const items = Array.from(posts)
         .map((post) => {
-          const id = post.getAttribute('data-post')
+          const id = post.getAttribute('data-post')?.split('/')[1]
           if (!id) {
             return null
           }
 
-          const url = `https://t.me/${telegramMatch[1]}/${id}`
+          const url = `https://t.me/s/${channel}/${id}`
+          const content = post.outerHTML
+
           // find the <time> element
           const time = post.querySelector('time')
           const dateTime = time?.getAttribute('datetime') || undefined
@@ -215,12 +247,16 @@ const parseFeed = async (url: string, content: string) => {
           return {
             link: url,
             isoDate: dateTime,
+            title: `${title} - ${id}`,
+            creator: title,
+            content,
+            links: [url],
           }
         })
         .filter((item) => !!item) as RssFeedItem[]
 
       return {
-        title: title?.getAttribute('content') || dom.title,
+        title,
         items,
       }
     }
@@ -254,13 +290,16 @@ const addFetchContentTask = (
 ) => {
   const url = item.link
   const task = fetchContentTasks.get(url)
+  const libraryItemId = uuid()
+  const userConfig = { id: userId, folder, libraryItemId }
+
   if (!task) {
     fetchContentTasks.set(url, {
-      users: new Map([[userId, { id: userId, folder }]]),
+      users: new Map([[userId, userConfig]]),
       item,
     })
   } else {
-    task.users.set(userId, { id: userId, folder })
+    task.users.set(userId, userConfig)
   }
 
   return true
@@ -293,7 +332,7 @@ const createTask = async (
 }
 
 const fetchContentAndCreateItem = async (
-  users: User[],
+  users: UserConfig[],
   feedUrl: string,
   item: RssFeedItem
 ) => {
@@ -301,7 +340,6 @@ const fetchContentAndCreateItem = async (
     users,
     source: 'rss-feeder',
     url: item.link.trim(),
-    saveRequestId: '',
     labels: [{ name: 'RSS' }],
     rssFeedUrl: feedUrl,
     savedAt: item.isoDate,
@@ -337,7 +375,7 @@ const createItemWithFeedContent = async (
     })
 
     const thumbnail = getThumbnail(item)
-    const previewImage = thumbnail && createThumbnailUrl(thumbnail)
+    const previewImage = thumbnail && createThumbnailProxyUrl(thumbnail)
     const url = cleanUrl(item.link)
 
     const user = await findActiveUser(userId)
@@ -511,7 +549,7 @@ const processSubscription = async (
 
   // fetch feed
   let itemCount = 0,
-    failedAt: Date | undefined
+    failedAt: Date | null = null
 
   const feedLastBuildDate = feed.lastBuildDate
   logger.info(`Feed last build date ${feedLastBuildDate || 'N/A'}`)

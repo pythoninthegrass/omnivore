@@ -40,6 +40,7 @@ import {
   saveIntegration,
   updateIntegration,
 } from '../../services/integrations'
+import { NotionClient } from '../../services/integrations/notion'
 import { analytics } from '../../utils/analytics'
 import {
   deleteTask,
@@ -52,20 +53,19 @@ export const setIntegrationResolver = authorized<
   SetIntegrationSuccess,
   SetIntegrationError,
   MutationSetIntegrationArgs
->(async (_, { input }, { uid }) => {
+>(async (_, { input }, { uid, log }) => {
   const integrationToSave: DeepPartial<Integration> = {
     ...input,
     user: { id: uid },
     id: input.id || undefined,
-    type: input.type || IntegrationType.Export,
+    type: input.type || undefined,
     syncedAt: input.syncedAt ? new Date(input.syncedAt) : undefined,
     importItemState:
       input.type === IntegrationType.Import
         ? input.importItemState || ImportItemState.Unarchived // default to unarchived
         : undefined,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    settings: input.settings,
   }
+
   if (input.id) {
     // Update
     const existingIntegration = await findIntegration({ id: input.id }, uid)
@@ -96,6 +96,39 @@ export const setIntegrationResolver = authorized<
   if (integration.name.toLowerCase() === 'readwise') {
     // create a task to export all the items for readwise temporarily
     await enqueueExportToIntegration(integration.id, uid)
+  } else if (
+    integration.name.toLowerCase() === 'notion' &&
+    integration.settings
+  ) {
+    const settings = integration.settings as { parentDatabaseId?: string }
+    if (settings.parentDatabaseId) {
+      // update notion database properties
+      const notion = new NotionClient(integration.token, integration)
+
+      try {
+        const database = await notion.findDatabase(settings.parentDatabaseId)
+
+        try {
+          await notion.updateDatabase(database)
+        } catch (error) {
+          log.error('failed to update notion database', {
+            databaseId: settings.parentDatabaseId,
+          })
+
+          return {
+            errorCodes: [SetIntegrationErrorCode.BadRequest],
+          }
+        }
+      } catch (error) {
+        log.error('notion database not found', {
+          databaseId: settings.parentDatabaseId,
+        })
+
+        return {
+          errorCodes: [SetIntegrationErrorCode.NotFound],
+        }
+      }
+    }
   }
 
   analytics.capture({

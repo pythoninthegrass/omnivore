@@ -32,13 +32,13 @@ import { ConfirmationModal } from '../../patterns/ConfirmationModal'
 import { LinkedItemCardAction } from '../../patterns/LibraryCards/CardTypes'
 import { LinkedItemCard } from '../../patterns/LibraryCards/LinkedItemCard'
 import { Box, HStack, SpanBox, VStack } from './../../elements/LayoutPrimitives'
-import { AddLinkModal } from './AddLinkModal'
+import { AddLinkModal } from '../AddLinkModal'
 import { EditLibraryItemModal } from './EditItemModals'
 import { EmptyLibrary } from './EmptyLibrary'
 import { HighlightItemsLayout } from './HighlightsLayout'
 import { LibraryFilterMenu } from '../navMenu/LibraryMenu'
 import { LibraryLegacyMenu } from '../navMenu/LibraryLegacyMenu'
-import { LibraryHeader, MultiSelectMode } from './LibraryHeader'
+import { LegacyLibraryHeader, MultiSelectMode } from './LibraryHeader'
 import { UploadModal } from '../UploadModal'
 import { BulkAction } from '../../../lib/networking/mutations/bulkActionMutation'
 import { bulkActionMutation } from '../../../lib/networking/mutations/bulkActionMutation'
@@ -116,7 +116,7 @@ export function HomeFeedContainer(): JSX.Element {
     performActionOnItem,
     mutate,
     error: fetchItemsError,
-  } = useGetLibraryItemsQuery(queryInputs)
+  } = useGetLibraryItemsQuery('inbox', queryInputs)
 
   useEffect(() => {
     const handleRevalidate = () => {
@@ -761,6 +761,7 @@ export function HomeFeedContainer(): JSX.Element {
           )
           if (res) {
             let successMessage: string | undefined = undefined
+            console.log(action)
             switch (action) {
               case BulkAction.ARCHIVE:
                 successMessage = 'Link Archived'
@@ -770,6 +771,9 @@ export function HomeFeedContainer(): JSX.Element {
                 break
               case BulkAction.DELETE:
                 successMessage = 'Items deleted'
+                break
+              case BulkAction.MARK_AS_READ:
+                successMessage = 'Items marked as read'
                 break
             }
             if (successMessage) {
@@ -971,7 +975,7 @@ function HomeFeedGrid(props: HomeFeedContentProps): JSX.Element {
       }}
     >
       {props.mode != 'highlights' && (
-        <LibraryHeader
+        <LegacyLibraryHeader
           layout={layout}
           viewer={viewerData?.me}
           updateLayout={updateLayout}
@@ -1327,6 +1331,7 @@ function LibraryItems(props: LibraryItemsProps): JSX.Element {
         >
           {props.viewer && (
             <LinkedItemCard
+              legacyLayout={true}
               layout={props.layout}
               item={linkedItem.node}
               isLoading={linkedItem.isLoading}

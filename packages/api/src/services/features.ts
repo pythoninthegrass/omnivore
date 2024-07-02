@@ -2,19 +2,33 @@ import * as jwt from 'jsonwebtoken'
 import { DeepPartial, FindOptionsWhere, IsNull, Not } from 'typeorm'
 import { appDataSource } from '../data_source'
 import { Feature } from '../entity/feature'
+import { LibraryItem } from '../entity/library_item'
+import { Subscription, SubscriptionStatus } from '../entity/subscription'
 import { env } from '../env'
-import { getRepository } from '../repository'
+import { OptInFeatureErrorCode } from '../generated/graphql'
+import { authTrx, getRepository } from '../repository'
 import { logger } from '../utils/logger'
 
 const MAX_ULTRA_REALISTIC_USERS = 1500
 const MAX_YOUTUBE_TRANSCRIPT_USERS = 500
 const MAX_NOTION_USERS = 1000
+const MAX_AIDIGEST_USERS = 1000
 
 export enum FeatureName {
   AISummaries = 'ai-summaries',
   YouTubeTranscripts = 'youtube-transcripts',
   UltraRealisticVoice = 'ultra-realistic-voice',
   Notion = 'notion',
+  AIDigest = 'ai-digest',
+  AIExplain = 'ai-explain',
+}
+
+export function isOptInFeatureErrorCode(
+  value: Feature | OptInFeatureErrorCode
+): value is OptInFeatureErrorCode {
+  return Object.values(OptInFeatureErrorCode).includes(
+    value as OptInFeatureErrorCode
+  )
 }
 
 export const getFeatureName = (name: string): FeatureName | undefined => {
@@ -24,7 +38,7 @@ export const getFeatureName = (name: string): FeatureName | undefined => {
 export const optInFeature = async (
   name: FeatureName,
   uid: string
-): Promise<Feature | undefined> => {
+): Promise<Feature | OptInFeatureErrorCode> => {
   switch (name) {
     case FeatureName.UltraRealisticVoice:
       return optInLimitedFeature(
@@ -40,8 +54,15 @@ export const optInFeature = async (
       )
     case FeatureName.Notion:
       return optInLimitedFeature(FeatureName.Notion, uid, MAX_NOTION_USERS)
+    case FeatureName.AIDigest: {
+      const eligible = await userDigestEligible(uid)
+      if (!eligible) {
+        return OptInFeatureErrorCode.Ineligible
+      }
+      return optInLimitedFeature(FeatureName.AIDigest, uid, MAX_AIDIGEST_USERS)
+    }
     default:
-      return undefined
+      return OptInFeatureErrorCode.NotFound
   }
 }
 
@@ -130,12 +151,12 @@ export const findUserFeatures = async (userId: string) => {
 
 export const findGrantedFeatureByName = async (
   name: FeatureName,
-  userId: string
+  userId: string,
+  relations?: 'user'[]
 ): Promise<Feature | null> => {
-  return getRepository(Feature).findOneBy({
-    name,
-    user: { id: userId },
-    grantedAt: Not(IsNull()),
+  return getRepository(Feature).findOne({
+    where: { name, user: { id: userId }, grantedAt: Not(IsNull()) },
+    relations,
   })
 }
 
@@ -151,4 +172,32 @@ export const createFeature = async (feature: DeepPartial<Feature>) => {
 
 export const createFeatures = async (features: DeepPartial<Feature>[]) => {
   return getRepository(Feature).save(features)
+}
+
+export const userDigestEligible = async (uid: string): Promise<boolean> => {
+  const subscriptionsCount = await authTrx(
+    async (tx) => {
+      return tx.getRepository(Subscription).count({
+        where: { user: { id: uid }, status: SubscriptionStatus.Active },
+      })
+    },
+    {
+      uid,
+      replicationMode: 'replica',
+    }
+  )
+
+  const libraryItemsCount = await authTrx(
+    async (tx) => {
+      return tx.getRepository(LibraryItem).count({
+        where: { user: { id: uid } },
+      })
+    },
+    {
+      uid,
+      replicationMode: 'replica',
+    }
+  )
+
+  return subscriptionsCount >= 2 && libraryItemsCount >= 10
 }

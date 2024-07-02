@@ -17,17 +17,16 @@ export const deleteUser = async (userId: string) => {
     async (t) => {
       await t.withRepository(userRepository).delete(userId)
     },
-    undefined,
-    userId
+    {
+      uid: userId,
+    }
   )
 }
 
 export const updateUser = async (userId: string, update: Partial<User>) => {
-  return authTrx(
-    async (t) => t.getRepository(User).update(userId, update),
-    undefined,
-    userId
-  )
+  return authTrx(async (t) => t.getRepository(User).update(userId, update), {
+    uid: userId,
+  })
 }
 
 export const softDeleteUser = async (userId: string) => {
@@ -51,8 +50,9 @@ export const softDeleteUser = async (userId: string) => {
         sourceUserId: `deleted_user_${userId}`,
       })
     },
-    undefined,
-    userId
+    {
+      uid: userId,
+    }
   )
 }
 
@@ -60,26 +60,22 @@ export const findActiveUser = async (id: string): Promise<User | null> => {
   return userRepository.findOneBy({ id, status: StatusType.Active })
 }
 
-export const findUsersById = async (ids: string[]): Promise<User[]> => {
+export const findUsersByIds = async (ids: string[]): Promise<User[]> => {
   return userRepository.findBy({ id: In(ids) })
 }
 
-export const deleteUsers = async (criteria: FindOptionsWhere<User>) => {
-  return authTrx(
-    async (t) => t.getRepository(User).delete(criteria),
-    undefined,
-    undefined,
-    SetClaimsRole.ADMIN
-  )
+export const deleteUsers = async (
+  criteria: FindOptionsWhere<User> | string[]
+) => {
+  return authTrx(async (t) => t.getRepository(User).delete(criteria), {
+    userRole: SetClaimsRole.ADMIN,
+  })
 }
 
 export const createUsers = async (users: DeepPartial<User>[]) => {
-  return authTrx(
-    async (t) => t.getRepository(User).save(users),
-    undefined,
-    undefined,
-    SetClaimsRole.ADMIN
-  )
+  return authTrx(async (t) => t.getRepository(User).save(users), {
+    userRole: SetClaimsRole.ADMIN,
+  })
 }
 
 export const batchDelete = async (criteria: FindOptionsWhere<User>) => {
@@ -93,7 +89,7 @@ export const batchDelete = async (criteria: FindOptionsWhere<User>) => {
   const sql = `
   -- Set batch size
   DO $$
-  DECLARE 
+  DECLARE
       batch_size INT := ${batchSize};
       user_ids UUID[];
   BEGIN
@@ -101,7 +97,7 @@ export const batchDelete = async (criteria: FindOptionsWhere<User>) => {
       FOR i IN 0..CEIL((${userCountSql}) * 1.0 / batch_size) - 1 LOOP
           -- GET batch of user ids
           ${userSubQuery} LIMIT batch_size;
-          
+
           -- Loop through batches of items
           FOR j IN 0..CEIL((SELECT COUNT(1) FROM omnivore.library_item WHERE user_id = ANY(user_ids)) * 1.0 / batch_size) - 1 LOOP
               -- Delete batch of items
@@ -120,12 +116,9 @@ export const batchDelete = async (criteria: FindOptionsWhere<User>) => {
   END $$
   `
 
-  return authTrx(
-    async (t) => t.query(sql),
-    undefined,
-    undefined,
-    SetClaimsRole.ADMIN
-  )
+  return authTrx(async (t) => t.query(sql), {
+    userRole: SetClaimsRole.ADMIN,
+  })
 }
 
 export const sendPushNotifications = async (
@@ -147,4 +140,19 @@ export const sendPushNotifications = async (
   }
 
   return sendMulticastPushNotifications(userId, message, notificationType)
+}
+
+export const findUserAndPersonalization = async (id: string) => {
+  return authTrx(
+    (t) =>
+      t.getRepository(User).findOne({
+        where: { id },
+        relations: {
+          userPersonalization: true,
+        },
+      }),
+    {
+      uid: id,
+    }
+  )
 }

@@ -8,7 +8,7 @@ import {
   CaretLeft,
   CaretRight,
   Check,
-} from 'phosphor-react'
+} from '@phosphor-icons/react'
 import { TickedRangeSlider } from '../../elements/TickedRangeSlider'
 import { showSuccessToast } from '../../../lib/toastHelpers'
 import { ReaderSettings } from '../../../lib/hooks/useReaderSettings'
@@ -48,6 +48,7 @@ const FONT_FAMILIES = [
   'IBMPlexSans',
   'Fraunces',
   'Literata',
+  'SuperNotesPro',
 ]
 
 type SettingsProps = {
@@ -277,7 +278,9 @@ function BasicSettings(props: SettingsProps): JSX.Element {
 
       <HorizontalDivider />
 
-      <ThemeSelector />
+      <SpanBox css={{ px: '10px', width: '100%' }}>
+        <ThemeSelector />
+      </SpanBox>
 
       <HorizontalDivider />
 
@@ -596,14 +599,14 @@ function LayoutControls(props: LayoutControlsProps): JSX.Element {
   )
 }
 
-function ThemeSelector(): JSX.Element {
+export function ThemeSelector(): JSX.Element {
   useDarkModeListener()
   const { currentTheme, setCurrentTheme, resetSystemTheme } = useCurrentTheme()
 
   return (
     <VStack
       css={{
-        px: '20px',
+        px: '10px',
         m: '0px',
         pb: '10px',
         width: '100%',

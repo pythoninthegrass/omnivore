@@ -1,5 +1,5 @@
 import { useRouter } from 'next/router'
-import { FloppyDisk, Pencil, XCircle } from 'phosphor-react'
+import { FloppyDisk, Pencil, XCircle } from '@phosphor-icons/react'
 import { useMemo, useState } from 'react'
 import { FormInput } from '../../../components/elements/FormElements'
 import {
@@ -229,11 +229,20 @@ export default function Rss(): JSX.Element {
                   }}
                 >
                   <SpanBox>{`URL: ${subscription.url}`}</SpanBox>
-                  <SpanBox>{`Last refreshed: ${
-                    subscription.lastFetchedAt
-                      ? formattedDateTime(subscription.lastFetchedAt)
-                      : 'Never'
-                  }`}</SpanBox>
+                  {/* show failed timestamp instead of last refreshed timestamp if the feed failed to refresh */}
+                  {subscription.failedAt ? (
+                    <SpanBox
+                      css={{ color: 'red' }}
+                    >{`Failed to refresh: ${formattedDateTime(
+                      subscription.failedAt
+                    )}`}</SpanBox>
+                  ) : (
+                    <SpanBox>{`Last refreshed: ${
+                      subscription.lastFetchedAt
+                        ? formattedDateTime(subscription.lastFetchedAt)
+                        : 'Never'
+                    }`}</SpanBox>
+                  )}
                   <SpanBox>
                     {subscription.mostRecentItemDate &&
                       `Most recent item: ${formattedDateTime(

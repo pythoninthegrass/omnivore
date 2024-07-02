@@ -23,7 +23,7 @@ import { userRepository } from '../../repository/user'
 import { isErrorWithCode } from '../../resolvers'
 import { createUser } from '../../services/create_user'
 import {
-  sendConfirmationEmail,
+  sendNewAccountVerificationEmail,
   sendPasswordResetEmail,
 } from '../../services/send_emails'
 import { analytics } from '../../utils/analytics'
@@ -416,6 +416,7 @@ export function authRouter() {
       interface LoginRequest {
         email: string
         password: string
+        recaptchaToken?: string
       }
       function isValidLoginRequest(obj: any): obj is LoginRequest {
         return (
@@ -430,7 +431,19 @@ export function authRouter() {
           `${env.client.url}/auth/email-login?errorCodes=${LoginErrorCode.InvalidCredentials}`
         )
       }
-      const { email, password } = req.body
+
+      const { email, password, recaptchaToken } = req.body
+      if (process.env.RECAPTCHA_CHALLENGE_SECRET_KEY) {
+        const verified =
+          recaptchaToken && (await verifyChallengeRecaptcha(recaptchaToken))
+        if (!verified) {
+          logger.info('recaptcha failed', { recaptchaToken, verified })
+          return res.redirect(
+            `${env.client.url}/auth/email-login?errorCodes=UNKNOWN`
+          )
+        }
+      }
+
       try {
         const user = await userRepository.findByEmail(email.trim())
         if (!user || user.status === StatusType.Deleted) {
@@ -440,7 +453,7 @@ export function authRouter() {
         }
 
         if (user.status === StatusType.Pending && user.email) {
-          await sendConfirmationEmail({
+          await sendNewAccountVerificationEmail({
             id: user.id,
             email: user.email,
             name: user.name,
@@ -510,17 +523,15 @@ export function authRouter() {
         recaptchaToken,
       } = req.body
 
-      if (recaptchaToken && process.env.RECAPTCHA_CHALLENGE_SECRET_KEY) {
-        const verified = await verifyChallengeRecaptcha(recaptchaToken)
-        console.log('recaptcha result: ', recaptchaToken, verified)
-        // temporarily do not fail here so we can deploy this in stages
-        // just log the verification
-
-        // if (!verified) {
-        //   return res.redirect(
-        //     `${env.client.url}/auth/email-signup?errorCodes=UNKNOWN`
-        //   )
-        // }
+      if (process.env.RECAPTCHA_CHALLENGE_SECRET_KEY) {
+        const verified =
+          recaptchaToken && (await verifyChallengeRecaptcha(recaptchaToken))
+        if (!verified) {
+          logger.info('recaptcha failed', { recaptchaToken, verified })
+          return res.redirect(
+            `${env.client.url}/auth/email-signup?errorCodes=UNKNOWN`
+          )
+        }
       }
 
       // trim whitespace in email address
@@ -642,6 +653,17 @@ export function authRouter() {
         return res.redirect(
           `${env.client.url}/auth/forgot-password?errorCodes=INVALID_EMAIL`
         )
+      }
+
+      const captchaToken = req.body.recaptchaToken as string
+      if (process.env.RECAPTCHA_CHALLENGE_SECRET_KEY) {
+        const verified = await verifyChallengeRecaptcha(captchaToken)
+        if (!verified) {
+          logger.info('recaptcha failed', { captchaToken, verified })
+          return res.redirect(
+            `${env.client.url}/auth/forgot-password?errorCodes=UNKNOWN`
+          )
+        }
       }
 
       try {
